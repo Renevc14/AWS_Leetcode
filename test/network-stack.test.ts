@@ -13,11 +13,11 @@ describe('NetworkStack', () => {
     });
   });
 
-  it('crea 6 subnets (2 publicas, 2 app, 2 data)', () => {
-    template.resourceCountIs('AWS::EC2::Subnet', 6);
+  it('crea solo una subnet publica', () => {
+    template.resourceCountIs('AWS::EC2::Subnet', 1);
   });
 
-  it('crea exactamente 1 NAT Gateway', () => {
-    template.resourceCountIs('AWS::EC2::NatGateway', 1);
+  it('no crea NAT Gateways', () => {
+    template.resourceCountIs('AWS::EC2::NatGateway', 0);
   });
 });

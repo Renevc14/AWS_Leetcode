@@ -10,13 +10,9 @@ export class NetworkStack extends Stack {
 
     this.vpc = new Vpc(this, 'Vpc', {
       ipAddresses: IpAddresses.cidr('10.0.0.0/16'),
-      maxAzs: 2,
-      natGateways: 1,
-      subnetConfiguration: [
-        { name: 'public', subnetType: SubnetType.PUBLIC, cidrMask: 24 },
-        { name: 'app', subnetType: SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
-        { name: 'data', subnetType: SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
-      ],
+      maxAzs: 1,
+      natGateways: 0,
+      subnetConfiguration: [{ name: 'public', subnetType: SubnetType.PUBLIC, cidrMask: 24 }],
     });
 
     new CfnOutput(this, 'VpcId', { value: this.vpc.vpcId });
