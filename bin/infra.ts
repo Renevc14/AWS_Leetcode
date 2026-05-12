@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib/core';
 import { NetworkStack } from '../lib/stacks/network-stack';
+import { SecretsStack } from '../lib/stacks/secrets-stack';
 
 const app = new cdk.App();
 
@@ -10,3 +11,4 @@ const env = {
 };
 
 new NetworkStack(app, 'NetworkStack', { env });
+new SecretsStack(app, 'SecretsStack', { env });
