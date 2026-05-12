@@ -1,0 +1,120 @@
+version: 1
+metadata:
+  name: LeetCode OIDC setup
+  labels:
+    blueprints.goauthentik.io/instantiate: 'true'
+entries:
+  - model: authentik_core.group
+    identifiers:
+      name: USER
+    attrs:
+      is_superuser: false
+
+  - model: authentik_core.group
+    identifiers:
+      name: SETTER
+    attrs:
+      is_superuser: false
+
+  - model: authentik_core.group
+    identifiers:
+      name: ADMIN
+    attrs:
+      is_superuser: false
+
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: Roles Mapping
+    attrs:
+      scope_name: roles
+      description: Claim custom con los roles del usuario
+      expression: |
+        return {
+            "roles": [group.name for group in user.ak_groups.all()],
+        }
+
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: leetcode-provider
+    attrs:
+      authorization_flow:
+        !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      client_type: public
+      client_id: leetcode
+      include_claims_in_id_token: true
+      sub_mode: hashed_user_id
+      signing_key:
+        !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      redirect_uris:
+        - matching_mode: strict
+          url: http://localhost:5173/auth/callback
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, Roles Mapping]]
+
+  - model: authentik_core.application
+    identifiers:
+      slug: leetcode
+    attrs:
+      name: LeetCode
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, leetcode-provider]]
+      meta_launch_url: http://localhost:5173/
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, leetcode]]
+      group: !Find [authentik_core.group, [name, USER]]
+      order: 0
+    attrs:
+      enabled: true
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, leetcode]]
+      group: !Find [authentik_core.group, [name, SETTER]]
+      order: 1
+    attrs:
+      enabled: true
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, leetcode]]
+      group: !Find [authentik_core.group, [name, ADMIN]]
+      order: 2
+    attrs:
+      enabled: true
+
+  - model: authentik_core.user
+    identifiers:
+      username: test-user
+    attrs:
+      name: Test User
+      email: test-user@example.com
+      password: Test123!
+      groups:
+        - !Find [authentik_core.group, [name, USER]]
+
+  - model: authentik_core.user
+    identifiers:
+      username: test-setter
+    attrs:
+      name: Test Setter
+      email: test-setter@example.com
+      password: Test123!
+      groups:
+        - !Find [authentik_core.group, [name, USER]]
+        - !Find [authentik_core.group, [name, SETTER]]
+
+  - model: authentik_core.user
+    identifiers:
+      username: test-admin
+    attrs:
+      name: Test Admin
+      email: test-admin@example.com
+      password: Test123!
+      groups:
+        - !Find [authentik_core.group, [name, USER]]
+        - !Find [authentik_core.group, [name, SETTER]]
+        - !Find [authentik_core.group, [name, ADMIN]]

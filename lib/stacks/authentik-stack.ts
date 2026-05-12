@@ -52,6 +52,11 @@ export class AuthentikStack extends Stack {
     });
     composeAsset.grantRead(role);
 
+    const blueprintAsset = new Asset(this, 'BlueprintAsset', {
+      path: path.join(__dirname, '..', '..', 'assets', 'authentik', 'blueprints', 'leetcode.yaml'),
+    });
+    blueprintAsset.grantRead(role);
+
     const userData = UserData.forLinux();
     userData.addCommands(
       'set -euxo pipefail',
@@ -65,7 +70,10 @@ export class AuthentikStack extends Stack {
         '-o /usr/local/lib/docker/cli-plugins/docker-compose',
       'chmod +x /usr/local/lib/docker/cli-plugins/docker-compose',
       'install -d -o root -g root -m 0750 /opt/authentik',
+      'install -d -o 1000 -g 1000 -m 0755 /opt/authentik/blueprints',
       `aws s3 cp ${composeAsset.s3ObjectUrl} /opt/authentik/docker-compose.yml`,
+      `aws s3 cp ${blueprintAsset.s3ObjectUrl} /opt/authentik/blueprints/leetcode.yaml`,
+      'chmod 0644 /opt/authentik/blueprints/leetcode.yaml',
       'SECRET_KEY=$(aws secretsmanager get-secret-value --secret-id ' +
         `${props.authentikSecretKey.secretName} --query SecretString --output text)`,
       'if [ ! -f /opt/authentik/.pgpass ]; then openssl rand -base64 32 | tr -d "=+/" | cut -c1-40 > /opt/authentik/.pgpass; fi',

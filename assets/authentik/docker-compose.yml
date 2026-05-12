@@ -66,6 +66,7 @@ services:
       - authentik-media:/media
       - authentik-templates:/templates
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./blueprints:/blueprints/custom:ro
     depends_on:
       postgresql:
         condition: service_healthy
