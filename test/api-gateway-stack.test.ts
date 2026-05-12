@@ -16,35 +16,46 @@ describe('ApiGatewayStack', () => {
     });
   });
 
-  it('configura un JWT authorizer con issuer apuntando a Authentik', () => {
+  it('configura un Lambda authorizer con response type SIMPLE', () => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Authorizer', {
-      AuthorizerType: 'JWT',
-      JwtConfiguration: {
-        Audience: ['leetcode'],
-        Issuer: 'http://203.0.113.10:9000/application/o/leetcode/',
-      },
+      AuthorizerType: 'REQUEST',
+      AuthorizerPayloadFormatVersion: '2.0',
+      EnableSimpleResponses: true,
       IdentitySource: ['$request.header.Authorization'],
     });
   });
 
-  it('crea la ruta GET /v1/me con el authorizer', () => {
-    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
-      RouteKey: 'GET /v1/me',
-      AuthorizationType: 'JWT',
-    });
-  });
-
-  it('crea la Lambda handler con runtime Node 20', () => {
+  it('crea dos Lambdas: authorizer y MeHandler', () => {
+    template.resourceCountIs('AWS::Lambda::Function', 2);
     template.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs20.x',
       Handler: 'index.handler',
     });
   });
 
-  it('declara el integration target apuntando a la Lambda', () => {
+  it('crea la ruta GET /v1/me con el authorizer', () => {
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'GET /v1/me',
+      AuthorizationType: 'CUSTOM',
+    });
+  });
+
+  it('declara el integration target apuntando a Lambda', () => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Integration', {
       IntegrationType: 'AWS_PROXY',
       IntegrationUri: Match.anyValue(),
+    });
+  });
+
+  it('pasa la URL del JWKS y el issuer como variables de entorno al authorizer', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: {
+          JWKS_URI: 'http://203.0.113.10:9000/application/o/leetcode/jwks/',
+          ISSUER: 'http://203.0.113.10:9000/application/o/leetcode/',
+          AUDIENCE: 'leetcode',
+        },
+      },
     });
   });
 });
