@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib/core';
+import { AuthentikStack } from '../lib/stacks/authentik-stack';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { SecretsStack } from '../lib/stacks/secrets-stack';
 
@@ -10,5 +11,11 @@ const env = {
   region: process.env.CDK_DEFAULT_REGION,
 };
 
-new NetworkStack(app, 'NetworkStack', { env });
-new SecretsStack(app, 'SecretsStack', { env });
+const network = new NetworkStack(app, 'NetworkStack', { env });
+const secrets = new SecretsStack(app, 'SecretsStack', { env });
+
+new AuthentikStack(app, 'AuthentikStack', {
+  env,
+  vpc: network.vpc,
+  authentikSecretKey: secrets.authentikSecretKey,
+});
