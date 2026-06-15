@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CustomResource, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
 import {
   InstanceClass,
   InstanceSize,
@@ -8,6 +8,8 @@ import {
   SubnetType,
 } from 'aws-cdk-lib/aws-ec2';
 import { CfnCacheCluster, CfnSubnetGroup } from 'aws-cdk-lib/aws-elasticache';
+import { Code, Function as LambdaFunction, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { RetentionDays } from 'aws-cdk-lib/aws-logs';
 import {
   Credentials,
   DatabaseInstance,
@@ -15,7 +17,9 @@ import {
   PostgresEngineVersion,
 } from 'aws-cdk-lib/aws-rds';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
+import { Provider } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
+import * as path from 'path';
 
 export interface DataStackProps extends StackProps {
   vpc: IVpc;
@@ -23,14 +27,12 @@ export interface DataStackProps extends StackProps {
 }
 
 /**
- * Capa de datos compartida.
- *   - 1 RDS PostgreSQL t4g.micro con 4 databases lógicas (problems, users, submissions, contests).
- *     Cada microservicio se conecta solo a su DB con un user dedicado (gestionado por
- *     migraciones Prisma fuera de CDK). Acepta el trade-off: schema separado en una
- *     instancia compartida en lugar de 4 RDS separadas, por costo.
- *   - 1 ElastiCache Redis cache.t4g.micro compartido (caches y leaderboards).
- *
- * Para demo: deletion protection OFF, removal policy DESTROY.
+ * Capa de datos compartida + bootstrap automatico de las 4 databases logicas.
+ *   - 1 RDS PostgreSQL t4g.micro con 4 databases (problems, users, submissions,
+ *     contests). Cada microservicio se conecta a su DB; Prisma maneja el schema.
+ *   - 1 ElastiCache Redis cache.t4g.micro compartido.
+ *   - Custom resource Lambda que ejecuta CREATE DATABASE para cada una al hacer
+ *     cdk deploy DataStack (idempotente, no falla si ya existen).
  */
 export class DataStack extends Stack {
   public readonly database: DatabaseInstance;
@@ -41,7 +43,6 @@ export class DataStack extends Stack {
   constructor(scope: Construct, id: string, props: DataStackProps) {
     super(scope, id, props);
 
-    // Credenciales master del cluster (el resto de usuarios los crea Prisma).
     this.dbCredentialsSecret = new Secret(this, 'DbMasterCreds', {
       secretName: 'leetcode/db-master',
       generateSecretString: {
@@ -68,7 +69,42 @@ export class DataStack extends Stack {
       backupRetention: Duration.days(0),
     });
 
-    // ElastiCache Redis (subnet group + cluster).
+    // ─── Lambda custom resource: crea las 4 DBs logicas ─────────────────────
+    const bootstrapHandler = new LambdaFunction(this, 'DbBootstrapFn', {
+      runtime: Runtime.NODEJS_22_X,
+      handler: 'index.handler',
+      timeout: Duration.minutes(2),
+      memorySize: 256,
+      // VPC para alcanzar el RDS (en public, mismo SG de datos)
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: SubnetType.PUBLIC },
+      allowPublicSubnet: true,
+      securityGroups: [props.dataSecurityGroup],
+      code: Code.fromAsset(path.join(__dirname, '..', 'lambdas', 'db-bootstrap')),
+      logRetention: RetentionDays.ONE_DAY,
+    });
+
+    this.dbCredentialsSecret.grantRead(bootstrapHandler);
+
+    const provider = new Provider(this, 'DbBootstrapProvider', {
+      onEventHandler: bootstrapHandler,
+      logRetention: RetentionDays.ONE_DAY,
+    });
+
+    const bootstrap = new CustomResource(this, 'DbBootstrap', {
+      serviceToken: provider.serviceToken,
+      properties: {
+        DbHost: this.database.dbInstanceEndpointAddress,
+        DbPort: this.database.dbInstanceEndpointPort,
+        SecretArn: this.dbCredentialsSecret.secretArn,
+        Databases: ['problems', 'users', 'submissions', 'contests'],
+        // Trigger update si cambia el secret (rotacion) o se requiere re-run manual
+        Version: '1',
+      },
+    });
+    bootstrap.node.addDependency(this.database);
+
+    // ─── ElastiCache Redis ──────────────────────────────────────────────────
     const redisSubnetGroup = new CfnSubnetGroup(this, 'RedisSubnetGroup', {
       description: 'Subnet group para Redis',
       subnetIds: props.vpc.publicSubnets.map((s) => s.subnetId),

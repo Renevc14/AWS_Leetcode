@@ -43,9 +43,16 @@ export class NetworkStack extends Stack {
 
     this.dataSecurityGroup = new SecurityGroup(this, 'DataSg', {
       vpc: this.vpc,
-      description: 'SG para RDS y ElastiCache (solo acepta del SG de servicios)',
+      description: 'SG para RDS y ElastiCache',
       allowAllOutbound: false,
     });
+    // Self-reference: permite que la Lambda de bootstrap (que vive en este mismo SG)
+    // pueda conectar al RDS.
+    this.dataSecurityGroup.addIngressRule(
+      this.dataSecurityGroup,
+      Port.tcp(5432),
+      'Self-reference para Lambda de bootstrap',
+    );
     this.dataSecurityGroup.addIngressRule(
       this.servicesSecurityGroup,
       Port.tcp(5432),
