@@ -15,7 +15,7 @@ import {
 } from 'aws-cdk-lib/aws-ec2';
 import { ManagedPolicy, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { Repository } from 'aws-cdk-lib/aws-ecr';
-import { PrivateDnsNamespace, Service } from 'aws-cdk-lib/aws-servicediscovery';
+import { CfnInstance, CfnService, PrivateDnsNamespace } from 'aws-cdk-lib/aws-servicediscovery';
 import { Construct } from 'constructs';
 
 export interface ExecutorStackProps extends StackProps {
@@ -28,20 +28,22 @@ export interface ExecutorStackProps extends StackProps {
 }
 
 /**
- * executor-service desplegado en EC2 (no Fargate) porque necesita acceso al
- * socket de Docker en runtime para los sandboxes de codigo.
+ * executor-service en EC2 (Fargate no expone /var/run/docker.sock).
  *
  * UserData:
  *   1. Instala Docker y AWS CLI.
- *   2. Login en ECR.
- *   3. Pull de la imagen.
- *   4. docker run con el socket montado.
+ *   2. ECR login + pull de la imagen.
+ *   3. docker run con el socket montado.
  *
- * Para resolverlo por DNS desde los otros servicios via Cloud Map, registra una
- * entrada A en el namespace apuntando a la EIP.
+ * Para que el resto del cluster lo encuentre por DNS:
+ *   - Se crea una entrada CName "executor" en el namespace Cloud Map apuntando
+ *     a la EIP via CfnInstance(IPV4=eip).
+ *
+ * Asi, `http://executor.leetcode.local:8080` resuelve para los servicios Fargate.
  */
 export class ExecutorStack extends Stack {
   public readonly publicIp: string;
+  public readonly internalUrl: string;
 
   constructor(scope: Construct, id: string, props: ExecutorStackProps) {
     super(scope, id, props);
@@ -64,14 +66,12 @@ export class ExecutorStack extends Stack {
       'dnf install -y docker',
       'systemctl enable --now docker',
       'usermod -aG docker ec2-user',
-      // Login ECR
       `aws ecr get-login-password --region ${this.region} | docker login --username AWS --password-stdin ${this.account}.dkr.ecr.${this.region}.amazonaws.com`,
-      // Pre-pull runners (cpp, java, node, python) — el executor los espera disponibles
+      // Pre-pull runners (no fatal si fallan, el container los pull on-demand)
       'docker pull gcc:13-bookworm || true',
       'docker pull eclipse-temurin:21-jdk-noble || true',
       'docker pull node:22-alpine || true',
       'docker pull python:3.12-slim || true',
-      // Pull and run executor service
       `docker pull ${imageUri}`,
       `docker run -d --name executor --restart unless-stopped -p 8080:8080 \
          -v /var/run/docker.sock:/var/run/docker.sock \
@@ -96,23 +96,32 @@ export class ExecutorStack extends Stack {
       instanceId: instance.instanceId,
     });
     this.publicIp = eip.ref;
+    this.internalUrl = `http://executor.${props.namespace.namespaceName}:8080`;
 
-    // Registra en Cloud Map (DNS interno) — los otros servicios lo resuelven
-    // como http://executor.leetcode.local:8080.
-    const dnsService = new Service(this, 'DnsService', {
-      namespace: props.namespace,
+    // Registra "executor" en Cloud Map apuntando a la EIP.
+    // CfnService nos permite controlar el tipo de servicio (DNS_HTTP).
+    const dnsService = new CfnService(this, 'CmService', {
       name: 'executor',
-      dnsRecordType: undefined, // default A
-      loadBalancer: false,
+      namespaceId: props.namespace.namespaceId,
+      dnsConfig: {
+        namespaceId: props.namespace.namespaceId,
+        routingPolicy: 'WEIGHTED',
+        dnsRecords: [{ ttl: 60, type: 'A' }],
+      },
     });
-    // No hay un helper directo para registrar una IP arbitraria en CDK Service
-    // (esta pensado para instancias ECS). Lo dejamos como informacion para
-    // que el operador lo cree manualmente con `aws servicediscovery register-instance`
-    // o se actualice por hook del UserData. Para demo, los servicios pueden
-    // usar la EIP directa via env var EXECUTOR_SERVICE_URL.
+
+    // CfnInstance registra una IP arbitraria como instancia del servicio.
+    new CfnInstance(this, 'CmInstance', {
+      serviceId: dnsService.ref,
+      instanceId: 'executor-eip',
+      instanceAttributes: {
+        AWS_INSTANCE_IPV4: eip.ref,
+        AWS_INSTANCE_PORT: '8080',
+      },
+    });
 
     new CfnOutput(this, 'ExecutorPublicIp', { value: eip.ref });
     new CfnOutput(this, 'ExecutorInstanceId', { value: instance.instanceId });
-    new CfnOutput(this, 'ExecutorDnsServiceId', { value: dnsService.serviceId });
+    new CfnOutput(this, 'ExecutorInternalUrl', { value: this.internalUrl });
   }
 }
