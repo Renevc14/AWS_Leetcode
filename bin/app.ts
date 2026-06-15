@@ -9,6 +9,7 @@ import { ExecutorStack } from '../lib/stacks/executor-stack';
 import { FrontendStack } from '../lib/stacks/frontend-stack';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { SecretsStack } from '../lib/stacks/secrets-stack';
+import { CicdStack } from '../lib/stacks/cicd-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
 
 const app = new cdk.App();
@@ -98,3 +99,10 @@ const apiGw = new ApiGatewayStack(app, 'ApiGatewayStack', {
 });
 apiGw.addDependency(services);
 apiGw.addDependency(authentik);
+
+// CI/CD: OIDC provider + role para GitHub Actions del repo de codigo
+new CicdStack(app, 'CicdStack', {
+  env,
+  githubOwnerRepo: app.node.tryGetContext('githubOwnerRepo') ?? 'Renevc14/Leetcode',
+  repositories: ecr.repositories,
+});
