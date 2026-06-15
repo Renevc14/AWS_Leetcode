@@ -117,7 +117,27 @@ Si más adelante se actualiza el `imageTag` (nueva versión con migraciones nuevas
 
 > Si preferís correrlas a mano (para debug), también podés con `aws ecs run-task` + override del comando. La lógica exacta está en `lib/lambdas/prisma-migrations-runner/index.mjs`.
 
-### Fase 6 â€” Frontend al CloudFront
+### Fase 6 â€” Frontend al CloudFront + sync de Authentik
+
+Antes de subir el frontend, **necesitamos que Authentik conozca el dominio CloudFront exacto** (el blueprint solo acepta el regex generico, esto lo afina con un strict match).
+
+#### 6a â€” API token de Authentik
+
+En la UI de Authentik: Directory -> Tokens -> Create. Copy el valor. Despues guardarlo en el secret:
+
+```bash
+aws secretsmanager put-secret-value   --secret-id authentik/api-token   --secret-string '<el-token>'
+```
+
+#### 6b â€” Sync del redirect_uri
+
+```bash
+cdk deploy AuthentikSyncStack
+```
+
+#### 6c â€” Build del frontend y subida al CloudFront
+
+#### 6c â€” Frontend al CloudFront
 
 En `Leetcode`:
 

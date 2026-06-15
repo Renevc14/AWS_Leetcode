@@ -12,6 +12,7 @@ import { NetworkStack } from '../lib/stacks/network-stack';
 import { SecretsStack } from '../lib/stacks/secrets-stack';
 import { CicdStack } from '../lib/stacks/cicd-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
+import { AuthentikSyncStack } from '../lib/stacks/authentik-sync-stack';
 
 const app = new cdk.App();
 
@@ -20,11 +21,8 @@ const env = {
   region: process.env.CDK_DEFAULT_REGION,
 };
 
-// Tag de imagen para los microservicios. Se setea por contexto en deploy:
-//   cdk deploy --all --context imageTag=v1
 const imageTag = app.node.tryGetContext('imageTag') ?? 'latest';
 
-// ─── Infra base + Authentik (ya existian) ─────────────────────────────────────
 const network = new NetworkStack(app, 'NetworkStack', { env });
 const secrets = new SecretsStack(app, 'SecretsStack', { env });
 
@@ -34,17 +32,14 @@ const authentik = new AuthentikStack(app, 'AuthentikStack', {
   authentikSecretKey: secrets.authentikSecretKey,
 });
 
-// ─── Datos compartidos (RDS + Redis) ──────────────────────────────────────────
 const data = new DataStack(app, 'DataStack', {
   env,
   vpc: network.vpc,
   dataSecurityGroup: network.dataSecurityGroup,
 });
 
-// ─── Registro de imagenes ─────────────────────────────────────────────────────
 const ecr = new EcrStack(app, 'EcrStack', { env });
 
-// ─── Cluster + Cloud Map + ALB compartido ─────────────────────────────────────
 const ecsCluster = new EcsClusterStack(app, 'EcsClusterStack', {
   env,
   vpc: network.vpc,
@@ -52,14 +47,12 @@ const ecsCluster = new EcsClusterStack(app, 'EcsClusterStack', {
 
 const authJwksUrl = `http://${authentik.publicIp}:9000/application/o/leetcode/jwks/`;
 
-// ─── 4 servicios Fargate ──────────────────────────────────────────────────────
 const services = new ServicesStack(app, 'ServicesStack', {
   env,
   vpc: network.vpc,
   servicesSecurityGroup: network.servicesSecurityGroup,
   cluster: ecsCluster.cluster,
   namespace: ecsCluster.namespace,
-  
   repositories: ecr.repositories,
   imageTag,
   database: data.database,
@@ -71,7 +64,7 @@ const services = new ServicesStack(app, 'ServicesStack', {
 services.addDependency(data);
 services.addDependency(ecsCluster);
 services.addDependency(ecr);
-// Migraciones Prisma como Fargate one-off al deploy
+
 const migrations = new MigrationsStack(app, 'MigrationsStack', {
   env,
   vpc: network.vpc,
@@ -83,8 +76,6 @@ const migrations = new MigrationsStack(app, 'MigrationsStack', {
 migrations.addDependency(services);
 migrations.addDependency(data);
 
-
-// ─── executor-service en EC2 (necesita docker socket) ─────────────────────────
 const executor = new ExecutorStack(app, 'ExecutorStack', {
   env,
   vpc: network.vpc,
@@ -97,10 +88,8 @@ const executor = new ExecutorStack(app, 'ExecutorStack', {
 executor.addDependency(ecsCluster);
 executor.addDependency(ecr);
 
-// ─── Frontend (S3 + CloudFront) ───────────────────────────────────────────────
 const frontend = new FrontendStack(app, 'FrontendStack', { env });
 
-// ─── API Gateway con VPC Link al ALB de servicios ─────────────────────────────
 const apiGw = new ApiGatewayStack(app, 'ApiGatewayStack', {
   env,
   authentikPublicIp: authentik.publicIp,
@@ -113,7 +102,13 @@ const apiGw = new ApiGatewayStack(app, 'ApiGatewayStack', {
 apiGw.addDependency(services);
 apiGw.addDependency(authentik);
 
-// CI/CD: OIDC provider + role para GitHub Actions del repo de codigo
+new AuthentikSyncStack(app, 'AuthentikSyncStack', {
+  env,
+  authentikBaseUrl: `http://${authentik.publicIp}:9000`,
+  apiTokenSecret: secrets.authentikApiToken,
+  cloudFrontDomain: frontend.distribution.distributionDomainName,
+}).addDependency(authentik);
+
 new CicdStack(app, 'CicdStack', {
   env,
   githubOwnerRepo: app.node.tryGetContext('githubOwnerRepo') ?? 'Renevc14/Leetcode',
