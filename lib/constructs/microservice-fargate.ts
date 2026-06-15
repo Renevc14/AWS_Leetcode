@@ -50,6 +50,7 @@ export interface MicroserviceFargateProps {
  */
 export class MicroserviceFargate extends Construct {
   public readonly service: FargateService;
+  public readonly taskDefinition: FargateTaskDefinition;
   public readonly targetGroup: ApplicationTargetGroup;
 
   constructor(scope: Construct, id: string, props: MicroserviceFargateProps) {
@@ -57,7 +58,7 @@ export class MicroserviceFargate extends Construct {
 
     const port = props.port ?? 8080;
 
-    const taskDef = new FargateTaskDefinition(this, 'Task', {
+    this.taskDefinition = new FargateTaskDefinition(this, 'Task', {
       cpu: props.cpu ?? 256,
       memoryLimitMiB: props.memoryLimitMiB ?? 512,
       runtimePlatform: {
@@ -71,7 +72,7 @@ export class MicroserviceFargate extends Construct {
       retention: RetentionDays.ONE_DAY,
     });
 
-    taskDef.addContainer('app', {
+    this.taskDefinition.addContainer('app', {
       image: ContainerImage.fromEcrRepository(props.repository, props.imageTag),
       essential: true,
       environment: props.environment,
@@ -85,7 +86,7 @@ export class MicroserviceFargate extends Construct {
 
     this.service = new FargateService(this, 'Service', {
       cluster: props.cluster,
-      taskDefinition: taskDef,
+      taskDefinition: this.taskDefinition,
       desiredCount: 1,
       assignPublicIp: true,
       vpcSubnets: { subnetType: SubnetType.PUBLIC },

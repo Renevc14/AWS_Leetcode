@@ -7,6 +7,7 @@ import { EcrStack } from '../lib/stacks/ecr-stack';
 import { EcsClusterStack } from '../lib/stacks/ecs-cluster-stack';
 import { ExecutorStack } from '../lib/stacks/executor-stack';
 import { FrontendStack } from '../lib/stacks/frontend-stack';
+import { MigrationsStack } from '../lib/stacks/migrations-stack';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { SecretsStack } from '../lib/stacks/secrets-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
@@ -69,6 +70,18 @@ const services = new ServicesStack(app, 'ServicesStack', {
 services.addDependency(data);
 services.addDependency(ecsCluster);
 services.addDependency(ecr);
+// Migraciones Prisma como Fargate one-off al deploy
+const migrations = new MigrationsStack(app, 'MigrationsStack', {
+  env,
+  vpc: network.vpc,
+  cluster: ecsCluster.cluster,
+  servicesSecurityGroup: network.servicesSecurityGroup,
+  serviceConstructs: services.serviceConstructs,
+  imageTag,
+});
+migrations.addDependency(services);
+migrations.addDependency(data);
+
 
 // ─── executor-service en EC2 (necesita docker socket) ─────────────────────────
 const executor = new ExecutorStack(app, 'ExecutorStack', {
