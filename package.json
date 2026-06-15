@@ -9,7 +9,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "postinstall": "cd lib/lambdas/db-bootstrap && npm install --omit=dev"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

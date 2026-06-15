@@ -1,39 +1,33 @@
 # Guía de despliegue para la demo
 
-> Este repo solo despliega infraestructura AWS. El código de los microservicios y el frontend vive en [Renevc14/Leetcode](https://github.com/Renevc14/Leetcode). Antes de desplegar acá, asegurate de tener las imágenes Docker buildeadas y subidas a ECR (ver paso 3).
+> Solo infra AWS. El código vive en [Renevc14/Leetcode](https://github.com/Renevc14/Leetcode).
 
-## Costo estimado
+## Costo estimado para 2 h de demo: ~$2 USD
 
-Para una demo de **2 horas con tráfico controlado**: ~$2-3 USD. Detalle:
-
-| Recurso | Costo aprox 2 h |
+| Recurso | 2 h |
 |---|---|
-| RDS db.t4g.micro | $0.03 |
-| ElastiCache cache.t4g.micro | $0.03 |
-| 4 Fargate tasks (0.25 vCPU, 0.5 GB) | $0.20 |
-| EC2 t3.small para Authentik + executor | $0.05 |
+| RDS db.t4g.micro + ElastiCache | $0.06 |
+| 4 Fargate (0.25 vCPU, 0.5 GB) | $0.20 |
+| 2 EC2 (Authentik t3.small, executor t3.small) | $0.10 |
 | ALB compartido | $0.05 |
 | CloudFront + S3 | ~$0 |
-| Data transfer | < $0.50 |
-| **Total** | **< $1** + buffer |
+| **Total** | **~$0.50 + buffer** |
 
-Hacer `cdk destroy --all` apenas termine la demo. RDS no tiene deletion protection ni backup retention.
+`cdk destroy --all` apenas termine.
 
 ## Prerrequisitos
 
 ```bash
-# CLI tools
-aws --version    # >= 2.x
 node --version   # >= 22
-npm install -g aws-cdk  # >= 2.180
+aws --version    # >= 2.x
+npm install -g aws-cdk
 
-# AWS creds configuradas
-aws sts get-caller-identity   # devuelve tu account
+aws sts get-caller-identity
 export AWS_REGION=us-east-1
 export CDK_DEFAULT_REGION=us-east-1
 ```
 
-En git-bash en Windows si hay problemas de credenciales:
+En git-bash en Windows si falla:
 
 ```bash
 export AWS_SHARED_CREDENTIALS_FILE="/c/Users/<usuario>/.aws/credentials"
@@ -48,79 +42,111 @@ cdk bootstrap
 
 ## Orden de deploy
 
-El despliegue tiene 3 fases.
-
-### Fase 1 — Infra base y Authentik
+### Fase 1 — Infra base + Authentik + datos
 
 ```bash
-cdk deploy NetworkStack SecretsStack AuthentikStack DataStack EcrStack EcsClusterStack FrontendStack
+cdk deploy NetworkStack SecretsStack AuthentikStack DataStack EcrStack FrontendStack
 ```
 
-Tarda ~10 min. Los outputs importantes:
+~10 min. El custom resource Lambda de `DataStack` crea automáticamente las 4 DBs en el RDS (`problems`, `users`, `submissions`, `contests`). No hay que hacer `CREATE DATABASE` manual.
 
-- `AuthentikStack.PublicIp` — IP pública de la EC2 con Authentik.
-- `DataStack.DbSecretArn`, `DataStack.DbEndpoint`, `DataStack.RedisEndpoint`.
-- `EcrStack.Uri-<service>` — URI ECR para cada uno de los 5 servicios.
+Outputs importantes:
+
+- `AuthentikStack.PublicIp` — EIP de Authentik.
+- `DataStack.DbEndpoint`, `DataStack.DbSecretArn`, `DataStack.RedisEndpoint`.
+- `EcrStack.Uri-<service>` — URIs para `docker push`.
 - `FrontendStack.BucketName`, `FrontendStack.CloudFrontUrl`.
 
 ### Fase 2 — Authentik post-deploy
 
-1. **Authentik tarda ~3 min** en levantar tras CREATE_COMPLETE. Verifica:
-   ```bash
-   curl -s -o /dev/null -w "%{http_code}\n" http://<EIP>:9000
-   # 302 = listo
-   ```
-2. **Reset password de `akadmin`** vía SSM:
+1. Esperá ~3 min después de CREATE_COMPLETE.
+2. Reset password de `akadmin` vía SSM:
    ```bash
    aws ssm send-command --instance-ids <id> \
      --document-name "AWS-RunShellScript" \
      --parameters 'commands=["cd /opt/authentik && docker compose exec -T worker ak create_recovery_key 24 akadmin"]'
-   # Tomá el command-id, esperá 5s, leé el output con get-command-invocation
    ```
-3. **Verifica que el blueprint corrió** (provider OIDC `leetcode` debe existir):
+3. Verificá que el blueprint corrió:
    ```bash
    curl -s http://<EIP>:9000/application/o/leetcode/.well-known/openid-configuration | head
    ```
 
-### Fase 3 — Build y push de las imágenes Docker
+### Fase 3 — Build y push de las 5 imágenes Docker
 
-En el repo de aplicación (`Leetcode`):
+En el repo `Leetcode`:
 
 ```bash
-# Login a ECR
-aws ecr get-login-password --region us-east-1 \
-  | docker login --username AWS --password-stdin <account>.dkr.ecr.us-east-1.amazonaws.com
+export ACCOUNT_ID=<tu-aws-account-id>
+export REGION=us-east-1
 
-# Build y push de los 5 servicios
+aws ecr get-login-password --region $REGION \
+  | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+
+# Los 4 servicios estándar
 for svc in problems-service users-service submissions-service contests-service; do
   docker build -f Dockerfile.service --build-arg SERVICE=$svc \
-    -t <account>.dkr.ecr.us-east-1.amazonaws.com/leetcode/$svc:latest .
-  docker push <account>.dkr.ecr.us-east-1.amazonaws.com/leetcode/$svc:latest
+    -t $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/leetcode/$svc:latest .
+  docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/leetcode/$svc:latest
 done
 
-# Executor con su Dockerfile dedicado
+# Executor
 docker build -f microservices/executor-service/Dockerfile \
-  -t <account>.dkr.ecr.us-east-1.amazonaws.com/leetcode/executor-service:latest .
-docker push <account>.dkr.ecr.us-east-1.amazonaws.com/leetcode/executor-service:latest
+  -t $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/leetcode/executor-service:latest .
+docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/leetcode/executor-service:latest
 ```
 
-### Fase 4 — Servicios + API Gateway
+### Fase 4 — Cluster + servicios + executor + API Gateway
 
-De regreso en el repo de infra:
+De vuelta en el repo de infra:
 
 ```bash
-cdk deploy ServicesStack ExecutorStack ApiGatewayStack
+cdk deploy EcsClusterStack ServicesStack ExecutorStack ApiGatewayStack
 ```
 
-Tarda ~8 min. Cuando termine:
+~8 min. Cuando termine los Fargate tasks estarán `PROVISIONING` → `RUNNING` pero algunos pueden estar `UNHEALTHY` hasta que las migraciones corran. Eso lo arreglamos en la fase 5.
 
-- Los 4 Fargate tasks deben estar `RUNNING` y `HEALTHY` (verificá en consola ECS).
-- El executor (EC2) tarda ~2 min adicionales en bajar la imagen y arrancar.
-- `ApiGatewayStack.ApiUrl` te da la URL pública.
+### Fase 5 — Migraciones Prisma
 
-### Fase 5 — Frontend al CloudFront
+Cada servicio trae sus migrations en `microservices/<svc>/prisma/migrations/`. Las corremos como tarea Fargate one-off override del comando:
 
-En el repo de aplicación:
+```bash
+export CLUSTER=leetcode-cluster
+export SUBNET=$(aws ec2 describe-subnets \
+  --filters "Name=tag:Name,Values=NetworkStack/Vpc/publicSubnet1" \
+  --query "Subnets[0].SubnetId" --output text)
+export SVCS_SG=$(aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=*ServicesSg*" \
+  --query "SecurityGroups[0].GroupId" --output text)
+
+for svc in problems users submissions contests; do
+  TASK_DEF=$(aws ecs list-task-definitions \
+    --family-prefix ServicesStack-Svc${svc}service \
+    --status ACTIVE --sort DESC --max-items 1 \
+    --query "taskDefinitionArns[0]" --output text | sed 's|.*/||')
+
+  aws ecs run-task \
+    --cluster $CLUSTER \
+    --launch-type FARGATE \
+    --task-definition $TASK_DEF \
+    --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SVCS_SG],assignPublicIp=ENABLED}" \
+    --overrides "{\"containerOverrides\":[{\"name\":\"app\",\"command\":[\"sh\",\"-c\",\"npx prisma migrate deploy --schema=./prisma/schema.prisma\"]}]}"
+done
+```
+
+Espera ~30 s cada una, después chequeá:
+
+```bash
+aws ecs list-tasks --cluster $CLUSTER --query "taskArns" --output text
+aws ecs describe-tasks --cluster $CLUSTER --tasks <arn> --query "tasks[].containers[].exitCode"
+```
+
+> Las migraciones son idempotentes; si ya están aplicadas, no hace nada y sale con código 0.
+
+Tras esto, los servicios principales se vuelven `HEALTHY` (los healthchecks del ALB pasan).
+
+### Fase 6 — Frontend al CloudFront
+
+En `Leetcode`:
 
 ```bash
 cd frontend
@@ -132,51 +158,53 @@ VITE_API_BASE_URL=<api-gateway-url>
 ENV
 pnpm build
 
-# Subir a S3
 aws s3 sync dist/ s3://<bucket-name> --delete
 aws cloudfront create-invalidation --distribution-id <dist-id> --paths "/*"
 ```
 
-Recordá registrar el redirect URI nuevo en Authentik (UI → Applications → Providers → leetcode-provider) o agregarlo al blueprint.
+**Registrá el `redirect_uri` del CloudFront en Authentik** (UI → Applications → Providers → leetcode-provider → editar redirect URIs) o el callback fallará tras el login.
 
 ## Validación post-deploy
 
 ```bash
-# Sin token: 401
-curl -i <api-url>/v1/me
-
-# Login al frontend
-open <cloudfront-url>
-# Usar test-user / Test123! (creados por blueprint)
-# Navegar a /problems, /submit, etc.
+curl -i <api-url>/v1/me                      # 401 sin token
+curl -i <api-url>/v1/problems                # debería pegar al ALB y devolver JSON
+open <cloudfront-url>                        # frontend
 ```
 
-## Cleanup post-demo
+Usuarios de prueba (vienen del blueprint):
 
-**Hacelo apenas termines.** RDS y NAT son los más caros si quedan corriendo.
+| User | Password | Roles |
+|---|---|---|
+| `test-user` | `Test123!` | USER |
+| `test-setter` | `Test123!` | USER, SETTER |
+| `test-admin` | `Test123!` | USER, SETTER, ADMIN |
+
+## Cleanup post-demo
 
 ```bash
 cdk destroy --all
 ```
 
-Tarda ~15 min. Si algo queda colgado (stuck DELETE), revisar:
-
-- ECR: `aws ecr delete-repository --repository-name leetcode/<svc> --force`
-- S3: el bucket del frontend tiene `autoDeleteObjects: true`.
-- Secrets: entran en `scheduled deletion` con 7 días de recovery (~$0.30 total).
-- CloudFront: tarda ~10 min en eliminarse aunque el stack ya esté DELETE_COMPLETE.
+~15 min. Si algo queda colgado: ECR repos (`--force` para borrarlos con imágenes), CloudFront tarda ~10 min en eliminarse, secrets entran en scheduled deletion con 7 días de recovery.
 
 ## Mapa de stacks
 
-| Stack | Recursos |
-|---|---|
-| `NetworkStack` | VPC 1 AZ public + SGs (services, data) |
-| `SecretsStack` | Secrets para Authentik |
-| `DataStack` | RDS PostgreSQL t4g.micro + ElastiCache Redis t4g.micro |
-| `EcrStack` | 5 repos ECR |
-| `EcsClusterStack` | Cluster Fargate + Cloud Map namespace |
-| `ServicesStack` | ALB + listener + 4 Fargate services (problems, users, submissions, contests) |
-| `ExecutorStack` | EC2 t3.small con Docker para executor-service |
-| `AuthentikStack` | EC2 con Authentik + blueprint |
-| `FrontendStack` | S3 + CloudFront |
-| `ApiGatewayStack` | HTTP API + Lambda Authorizer + VPC Link al ALB |
+| Stack | Recursos | Tiempo deploy |
+|---|---|---|
+| `NetworkStack` | VPC 2 AZ + SGs | 2 min |
+| `SecretsStack` | Secrets para Authentik | 30 s |
+| `AuthentikStack` | EC2 + EIP + EBS + blueprint OIDC | 5 min |
+| `DataStack` | RDS PostgreSQL + ElastiCache Redis + **Lambda que crea las 4 DBs** | 8 min |
+| `EcrStack` | 5 repos ECR | 30 s |
+| `EcsClusterStack` | Cluster Fargate + Cloud Map | 1 min |
+| `ServicesStack` | ALB + listener + 4 Fargate services | 5 min |
+| `ExecutorStack` | EC2 con Docker + EIP | 3 min |
+| `FrontendStack` | S3 + CloudFront | 4 min |
+| `ApiGatewayStack` | HTTP API + Lambda Authorizer + VPC Link | 2 min |
+
+## Troubleshooting
+
+- **Migration task se queda en `PROVISIONING`**: el subnet ID o el SG ID están mal. Verificá con `describe-subnets` y `describe-security-groups`.
+- **Servicio Fargate en `UNHEALTHY` después de migrations**: revisar logs del task en CloudWatch (`/ecs/<service-name>`). Causa común: `DATABASE_URL` malformada (revisar variables de entorno del task definition).
+- **CORS error desde el frontend**: registrar el CloudFront URL en `ApiGatewayStack.frontendOrigin` (rebuild de ese stack) **y** en el provider de Authentik.
