@@ -107,7 +107,8 @@ export class MicroserviceFargate extends Construct {
         path: props.healthCheckPath ?? '/',
         interval: Duration.seconds(30),
         healthyThresholdCount: 2,
-        unhealthyThresholdCount: 3,
+        unhealthyThresholdCount: 5,
+        healthyHttpCodes: '200,404',
       },
       deregistrationDelay: Duration.seconds(10),
     });
