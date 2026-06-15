@@ -105,44 +105,17 @@ cdk deploy EcsClusterStack ServicesStack ExecutorStack ApiGatewayStack
 
 ~8 min. Cuando termine los Fargate tasks estarÃ¡n `PROVISIONING` â†’ `RUNNING` pero algunos pueden estar `UNHEALTHY` hasta que las migraciones corran. Eso lo arreglamos en la fase 5.
 
-### Fase 5 â€” Migraciones Prisma
-
-Cada servicio trae sus migrations en `microservices/<svc>/prisma/migrations/`. Las corremos como tarea Fargate one-off override del comando:
+### Fase 5 — Migraciones Prisma (automatizado)
 
 ```bash
-export CLUSTER=leetcode-cluster
-export SUBNET=$(aws ec2 describe-subnets \
-  --filters "Name=tag:Name,Values=NetworkStack/Vpc/publicSubnet1" \
-  --query "Subnets[0].SubnetId" --output text)
-export SVCS_SG=$(aws ec2 describe-security-groups \
-  --filters "Name=group-name,Values=*ServicesSg*" \
-  --query "SecurityGroups[0].GroupId" --output text)
-
-for svc in problems users submissions contests; do
-  TASK_DEF=$(aws ecs list-task-definitions \
-    --family-prefix ServicesStack-Svc${svc}service \
-    --status ACTIVE --sort DESC --max-items 1 \
-    --query "taskDefinitionArns[0]" --output text | sed 's|.*/||')
-
-  aws ecs run-task \
-    --cluster $CLUSTER \
-    --launch-type FARGATE \
-    --task-definition $TASK_DEF \
-    --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SVCS_SG],assignPublicIp=ENABLED}" \
-    --overrides "{\"containerOverrides\":[{\"name\":\"app\",\"command\":[\"sh\",\"-c\",\"npx prisma migrate deploy --schema=./prisma/schema.prisma\"]}]}"
-done
+cdk deploy MigrationsStack
 ```
 
-Espera ~30 s cada una, despuÃ©s chequeÃ¡:
+`MigrationsStack` lanza tareas Fargate one-off (una por servicio) que corren `npx prisma migrate deploy`. La Lambda espera el `exitCode` de cada una; si alguna falla, el stack queda en `UPDATE_ROLLBACK`. Las migraciones son idempotentes — re-correr es seguro.
 
-```bash
-aws ecs list-tasks --cluster $CLUSTER --query "taskArns" --output text
-aws ecs describe-tasks --cluster $CLUSTER --tasks <arn> --query "tasks[].containers[].exitCode"
-```
+Si más adelante se actualiza el `imageTag` (nueva versión con migraciones nuevas), `cdk deploy --context imageTag=<nuevo> MigrationsStack` re-dispara las migraciones.
 
-> Las migraciones son idempotentes; si ya estÃ¡n aplicadas, no hace nada y sale con cÃ³digo 0.
-
-Tras esto, los servicios principales se vuelven `HEALTHY` (los healthchecks del ALB pasan).
+> Si preferís correrlas a mano (para debug), también podés con `aws ecs run-task` + override del comando. La lógica exacta está en `lib/lambdas/prisma-migrations-runner/index.mjs`.
 
 ### Fase 6 â€” Frontend al CloudFront + sync de Authentik
 
@@ -220,6 +193,7 @@ cdk destroy --all
 | `EcsClusterStack` | Cluster Fargate + Cloud Map | 1 min |
 | `ServicesStack` | ALB + listener + 4 Fargate services | 5 min |
 | `ExecutorStack` | EC2 con Docker + EIP | 3 min |
+| `MigrationsStack` | Lambda + custom resource que corre `prisma migrate deploy` por servicio | 3-5 min |
 | `FrontendStack` | S3 + CloudFront | 4 min |
 | `ApiGatewayStack` | HTTP API + Lambda Authorizer + VPC Link | 2 min |
 

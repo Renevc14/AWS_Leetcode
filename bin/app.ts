@@ -7,8 +7,10 @@ import { EcrStack } from '../lib/stacks/ecr-stack';
 import { EcsClusterStack } from '../lib/stacks/ecs-cluster-stack';
 import { ExecutorStack } from '../lib/stacks/executor-stack';
 import { FrontendStack } from '../lib/stacks/frontend-stack';
+import { MigrationsStack } from '../lib/stacks/migrations-stack';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { SecretsStack } from '../lib/stacks/secrets-stack';
+import { CicdStack } from '../lib/stacks/cicd-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
 import { AuthentikSyncStack } from '../lib/stacks/authentik-sync-stack';
 
@@ -19,11 +21,8 @@ const env = {
   region: process.env.CDK_DEFAULT_REGION,
 };
 
-// Tag de imagen para los microservicios. Se setea por contexto en deploy:
-//   cdk deploy --all --context imageTag=v1
 const imageTag = app.node.tryGetContext('imageTag') ?? 'latest';
 
-// ─── Infra base + Authentik (ya existian) ─────────────────────────────────────
 const network = new NetworkStack(app, 'NetworkStack', { env });
 const secrets = new SecretsStack(app, 'SecretsStack', { env });
 
@@ -33,17 +32,14 @@ const authentik = new AuthentikStack(app, 'AuthentikStack', {
   authentikSecretKey: secrets.authentikSecretKey,
 });
 
-// ─── Datos compartidos (RDS + Redis) ──────────────────────────────────────────
 const data = new DataStack(app, 'DataStack', {
   env,
   vpc: network.vpc,
   dataSecurityGroup: network.dataSecurityGroup,
 });
 
-// ─── Registro de imagenes ─────────────────────────────────────────────────────
 const ecr = new EcrStack(app, 'EcrStack', { env });
 
-// ─── Cluster + Cloud Map + ALB compartido ─────────────────────────────────────
 const ecsCluster = new EcsClusterStack(app, 'EcsClusterStack', {
   env,
   vpc: network.vpc,
@@ -51,14 +47,12 @@ const ecsCluster = new EcsClusterStack(app, 'EcsClusterStack', {
 
 const authJwksUrl = `http://${authentik.publicIp}:9000/application/o/leetcode/jwks/`;
 
-// ─── 4 servicios Fargate ──────────────────────────────────────────────────────
 const services = new ServicesStack(app, 'ServicesStack', {
   env,
   vpc: network.vpc,
   servicesSecurityGroup: network.servicesSecurityGroup,
   cluster: ecsCluster.cluster,
   namespace: ecsCluster.namespace,
-  
   repositories: ecr.repositories,
   imageTag,
   database: data.database,
@@ -71,7 +65,17 @@ services.addDependency(data);
 services.addDependency(ecsCluster);
 services.addDependency(ecr);
 
-// ─── executor-service en EC2 (necesita docker socket) ─────────────────────────
+const migrations = new MigrationsStack(app, 'MigrationsStack', {
+  env,
+  vpc: network.vpc,
+  cluster: ecsCluster.cluster,
+  servicesSecurityGroup: network.servicesSecurityGroup,
+  serviceConstructs: services.serviceConstructs,
+  imageTag,
+});
+migrations.addDependency(services);
+migrations.addDependency(data);
+
 const executor = new ExecutorStack(app, 'ExecutorStack', {
   env,
   vpc: network.vpc,
@@ -84,10 +88,8 @@ const executor = new ExecutorStack(app, 'ExecutorStack', {
 executor.addDependency(ecsCluster);
 executor.addDependency(ecr);
 
-// ─── Frontend (S3 + CloudFront) ───────────────────────────────────────────────
 const frontend = new FrontendStack(app, 'FrontendStack', { env });
 
-// ─── API Gateway con VPC Link al ALB de servicios ─────────────────────────────
 const apiGw = new ApiGatewayStack(app, 'ApiGatewayStack', {
   env,
   authentikPublicIp: authentik.publicIp,
@@ -100,10 +102,15 @@ const apiGw = new ApiGatewayStack(app, 'ApiGatewayStack', {
 apiGw.addDependency(services);
 apiGw.addDependency(authentik);
 
-// Authentik sync: registra el redirect_uri exacto del CloudFront en el provider OIDC
 new AuthentikSyncStack(app, 'AuthentikSyncStack', {
   env,
   authentikBaseUrl: `http://${authentik.publicIp}:9000`,
   apiTokenSecret: secrets.authentikApiToken,
   cloudFrontDomain: frontend.distribution.distributionDomainName,
 }).addDependency(authentik);
+
+new CicdStack(app, 'CicdStack', {
+  env,
+  githubOwnerRepo: app.node.tryGetContext('githubOwnerRepo') ?? 'Renevc14/Leetcode',
+  repositories: ecr.repositories,
+});
