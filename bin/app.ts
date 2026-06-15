@@ -10,6 +10,7 @@ import { FrontendStack } from '../lib/stacks/frontend-stack';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { SecretsStack } from '../lib/stacks/secrets-stack';
 import { ServicesStack } from '../lib/stacks/services-stack';
+import { AuthentikSyncStack } from '../lib/stacks/authentik-sync-stack';
 
 const app = new cdk.App();
 
@@ -98,3 +99,11 @@ const apiGw = new ApiGatewayStack(app, 'ApiGatewayStack', {
 });
 apiGw.addDependency(services);
 apiGw.addDependency(authentik);
+
+// Authentik sync: registra el redirect_uri exacto del CloudFront en el provider OIDC
+new AuthentikSyncStack(app, 'AuthentikSyncStack', {
+  env,
+  authentikBaseUrl: `http://${authentik.publicIp}:9000`,
+  apiTokenSecret: secrets.authentikApiToken,
+  cloudFrontDomain: frontend.distribution.distributionDomainName,
+}).addDependency(authentik);

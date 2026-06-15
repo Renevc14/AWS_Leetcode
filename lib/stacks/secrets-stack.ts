@@ -5,6 +5,7 @@ import { Construct } from 'constructs';
 export class SecretsStack extends Stack {
   public readonly authentikSecretKey: Secret;
   public readonly authentikClientSecret: Secret;
+  public readonly authentikApiToken: Secret;
 
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
@@ -27,9 +28,22 @@ export class SecretsStack extends Stack {
       },
     });
 
+    // Token de la API de Authentik para que la Lambda de redirect-sync
+    // pueda llamar a /api/v3/providers/. El operador lo crea en la UI
+    // (Directory → Tokens) y guarda el valor en este secret post-deploy.
+    this.authentikApiToken = new Secret(this, 'AuthentikApiToken', {
+      secretName: 'authentik/api-token',
+      description: 'API token de akadmin para llamadas administrativas (rellenar post-deploy)',
+      generateSecretString: {
+        excludePunctuation: true,
+        passwordLength: 32,
+      },
+    });
+
     new CfnOutput(this, 'AuthentikSecretKeyArn', { value: this.authentikSecretKey.secretArn });
     new CfnOutput(this, 'AuthentikClientSecretArn', {
       value: this.authentikClientSecret.secretArn,
     });
+    new CfnOutput(this, 'AuthentikApiTokenArn', { value: this.authentikApiToken.secretArn });
   }
 }

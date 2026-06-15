@@ -144,7 +144,27 @@ aws ecs describe-tasks --cluster $CLUSTER --tasks <arn> --query "tasks[].contain
 
 Tras esto, los servicios principales se vuelven `HEALTHY` (los healthchecks del ALB pasan).
 
-### Fase 6 — Frontend al CloudFront
+### Fase 6 — Frontend al CloudFront + sync de Authentik
+
+Antes de subir el frontend, **necesitamos que Authentik conozca el dominio CloudFront exacto** (el blueprint solo acepta el regex generico, esto lo afina con un strict match).
+
+#### 6a — API token de Authentik
+
+En la UI de Authentik: Directory -> Tokens -> Create. Copy el valor. Despues guardarlo en el secret:
+
+```bash
+aws secretsmanager put-secret-value   --secret-id authentik/api-token   --secret-string '<el-token>'
+```
+
+#### 6b — Sync del redirect_uri
+
+```bash
+cdk deploy AuthentikSyncStack
+```
+
+#### 6c — Build del frontend y subida al CloudFront
+
+#### 6c — Frontend al CloudFront
 
 En `Leetcode`:
 
