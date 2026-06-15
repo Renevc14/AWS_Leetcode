@@ -1,0 +1,8 @@
+{
+  "name": "prisma-migrations-runner",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-ecs": "^3.700.0"
+  }
+}

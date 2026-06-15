@@ -10,7 +10,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "cdk": "cdk",
-    "postinstall": "cd lib/lambdas/db-bootstrap && npm install --omit=dev"
+    "postinstall": "cd lib/lambdas/db-bootstrap && npm install --omit=dev && cd ../prisma-migrations-runner && npm install --omit=dev"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

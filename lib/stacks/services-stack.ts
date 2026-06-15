@@ -35,6 +35,7 @@ export interface ServicesStackProps extends StackProps {
 export class ServicesStack extends Stack {
   public readonly alb: ApplicationLoadBalancer;
   public readonly listener: ApplicationListener;
+  public readonly serviceConstructs: Map<string, MicroserviceFargate> = new Map();
 
   constructor(scope: Construct, id: string, props: ServicesStackProps) {
     super(scope, id, props);
@@ -113,7 +114,8 @@ export class ServicesStack extends Stack {
           DB_PASSWORD: dbSecret,
         },
       };
-      new MicroserviceFargate(this, `Svc-${cfg.name}`, svcProps);
+      const svc = new MicroserviceFargate(this, `Svc-${cfg.name}`, svcProps);
+      this.serviceConstructs.set(cfg.name, svc);
     }
 
     new CfnOutput(this, 'AlbDnsName', { value: this.alb.loadBalancerDnsName });
