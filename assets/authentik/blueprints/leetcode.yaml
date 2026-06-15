@@ -48,6 +48,10 @@ entries:
       redirect_uris:
         - matching_mode: strict
           url: http://localhost:5173/auth/callback
+        # Demo en CloudFront: el dominio se conoce solo despues del deploy de FrontendStack.
+        # Regex permite cualquier *.cloudfront.net del callback handler.
+        - matching_mode: regex
+          url: https://[a-z0-9]+\.cloudfront\.net/auth/callback
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
