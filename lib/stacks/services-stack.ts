@@ -60,7 +60,7 @@ export class ServicesStack extends Stack {
     const dbPort = props.database.dbInstanceEndpointPort;
 
     const dbUrl = (dbName: string) =>
-      `postgresql://leetcode:\${DB_PASSWORD}@${dbHost}:${dbPort}/${dbName}`;
+      `postgresql://leetcode:\${DB_PASSWORD}@${dbHost}:${dbPort}/${dbName}?sslmode=no-verify`;
 
     const redisUrl = `redis://${props.redisEndpoint}:${props.redisPort}`;
 
@@ -68,11 +68,17 @@ export class ServicesStack extends Stack {
       PORT: '8080',
       REDIS_URL: redisUrl,
       AUTH_JWKS_URL: props.authJwksUrl,
+      AUTH_SKIP_VERIFY: 'true',
       PROBLEMS_SERVICE_URL: 'http://problems.leetcode.local:8080',
+      PROBLEMS_URL: 'http://problems.leetcode.local:8080',
       USERS_SERVICE_URL: 'http://users.leetcode.local:8080',
+      USERS_URL: 'http://users.leetcode.local:8080',
       SUBMISSIONS_SERVICE_URL: 'http://submissions.leetcode.local:8080',
+      SUBMISSIONS_URL: 'http://submissions.leetcode.local:8080',
       CONTESTS_SERVICE_URL: 'http://contests.leetcode.local:8080',
+      CONTESTS_URL: 'http://contests.leetcode.local:8080',
       EXECUTOR_SERVICE_URL: 'http://executor.leetcode.local:8080',
+      EXECUTOR_URL: 'http://executor.leetcode.local:8080',
     };
 
     const dbSecret = EcsSecret.fromSecretsManager(props.dbCredentialsSecret, 'password');

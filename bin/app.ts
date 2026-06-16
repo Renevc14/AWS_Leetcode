@@ -88,7 +88,8 @@ const executor = new ExecutorStack(app, 'ExecutorStack', {
 executor.addDependency(ecsCluster);
 executor.addDependency(ecr);
 
-const frontend = new FrontendStack(app, 'FrontendStack', { env });
+const frontend = new FrontendStack(app, 'FrontendStack', { env, albDnsName: services.alb.loadBalancerDnsName, authentikHost: `ec2-${cdk.Fn.join('-', cdk.Fn.split('.', authentik.publicIp))}.compute-1.amazonaws.com` });
+frontend.addDependency(services);
 
 const apiGw = new ApiGatewayStack(app, 'ApiGatewayStack', {
   env,

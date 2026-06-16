@@ -1,7 +1,10 @@
 import { CfnOutput, Stack, StackProps } from 'aws-cdk-lib';
 import {
+  GatewayVpcEndpointAwsService,
+  InterfaceVpcEndpointAwsService,
   IVpc,
   IpAddresses,
+  Peer,
   Port,
   SecurityGroup,
   SubnetType,
@@ -44,7 +47,8 @@ export class NetworkStack extends Stack {
     this.dataSecurityGroup = new SecurityGroup(this, 'DataSg', {
       vpc: this.vpc,
       description: 'SG para RDS y ElastiCache',
-      allowAllOutbound: false,
+      // La Lambda de bootstrap esta en este SG y necesita egress al RDS (5432) y a Secrets Manager.
+      allowAllOutbound: true,
     });
     // Self-reference: permite que la Lambda de bootstrap (que vive en este mismo SG)
     // pueda conectar al RDS.
@@ -63,6 +67,25 @@ export class NetworkStack extends Stack {
       Port.tcp(6379),
       'Redis desde servicios',
     );
+
+
+    // VPC Interface Endpoint para Secrets Manager: la Lambda de bootstrap
+    // (en public subnet sin NAT) usa este endpoint para conseguir credenciales
+    // del RDS sin salida a internet.
+    const endpointSg = new SecurityGroup(this, 'EndpointSg', {
+      vpc: this.vpc,
+      description: 'SG para interface VPC endpoints',
+      allowAllOutbound: true,
+    });
+    endpointSg.addIngressRule(this.dataSecurityGroup, Port.tcp(443), 'HTTPS desde la Lambda de bootstrap');
+    endpointSg.addIngressRule(this.servicesSecurityGroup, Port.tcp(443), 'HTTPS desde los servicios');
+
+    this.vpc.addInterfaceEndpoint('SecretsManagerEndpoint', {
+      service: InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+      subnets: { subnetType: SubnetType.PUBLIC },
+      securityGroups: [endpointSg],
+      privateDnsEnabled: true,
+    });
 
     new CfnOutput(this, 'VpcId', { value: this.vpc.vpcId });
     new CfnOutput(this, 'ServicesSgId', { value: this.servicesSecurityGroup.securityGroupId });
